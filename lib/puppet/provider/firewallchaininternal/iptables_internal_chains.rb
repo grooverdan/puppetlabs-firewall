@@ -1,6 +1,6 @@
 
-Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
-  @doc = "Iptables chain provider for internal tables"
+Puppet::Type.type(:firewallchain).provide :iptables_chain do
+  @doc = "Iptables chain provider for tables"
 
   has_feature :iptables_chain
   has_feature :policy
@@ -14,24 +14,32 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
   commands :ebtables => '/sbin/ebtables'
   commands :ebtables_save => '/sbin/ebtables-save'
 
+  defaultfor :kernel => :linux
+
   Mapping = { 'IPv4' => { 'tables' => method( :iptables ), 'save' => method( :iptables_save) },
                'IPv6' => { 'tables' => method( :ip6tables ), 'save' => method( :ip6tables_save ) },
                'EB' => { 'tables' => method( :ebtables ), 'save' => method( :ebtables_save ) }
              }
-  Chains = 'PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT'
+  InternalChains = 'PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT'
   Tables = 'NAT|MANGLE|FILTER|RAW|RAWPOST|BROUTE|'
-  Nameformat = /^(#{Tables}):(#{Chains}):(IP(v[46])?|EB)$/
+  Nameformat = /^(#{Tables}):([^:]+):(IP(v[46])?|ethernet)$/
 
   def create
-    debug 'Inserting chain %s' % resource[:name]
-    # can't create internal tables
-    return
+    # can't create internal chains
+    return if @resource[:name] =~ /^#{InternalChains}$/
+    allvalidchains { |t table chain|
+      debug 'Inserting chain #{chain} on table #{table}'
+      t.call ['-t',table,'-N',chain] 
+    }
   end
 
   def destroy
-    debug 'Deleting chain %s' % resource[:name]
     # can't delete internal chains
-    return
+    return if @resource[:name] =~ /^#{InternalChains}$/
+    allvalidchains { |t table chain|
+      debug 'Deleting chain #{chain} on table #{table}'
+      t.call ['-t',table,'-X',chain] 
+    }
   end
 
   def exists?
@@ -39,21 +47,10 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
   end
 
   def policy=(value)
-    tables = []
-    @resource[:name].match(Nameformat)
-    table = ($1=='') ? 'filter' : $1.downcase
-    chain = $2
-    protocol = $3
-    p = ['-t', table ,'-P', chain, value.to_s.upcase]
-    if protocol == 'IP'
-      tables << Mapping['IPv4']['tables']
-      tables << Mapping['IPv6']['tables']
-    else
-      tables << Mapping[protocol]['tables']
-    end
-    tables.each { |t| 
+    allvalidchains { |t table chain|
+      p =  ['-t',table,'-P',chain,value.to_s.upcase]
       debug "[set policy] #{t} #{p}"
-      t.call(p)
+      t.call p
     }
   end
 
@@ -100,20 +97,23 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
 
     Mapping.each { |protocol, c|
       c['save'].call.split("\n").each do |line|
-        if line =~ /^:(#{Chains})\s+(\w+)/ then
+        # chain name is greedy so we anchor from the end.
+        # [\d+:\d+] doesn't exist on ebtables
+        if line =~ /^:(.+)\s(\w+)(\s\[\d+:\d+)?]$/ then
           name = (table == 'filter' ? '' : table.upcase) + ':' + $1
-          if protocol=='IPv6' && hash[name + ':IPv4']
-             # duplicate so create a {table}:{chain}:IP instance
-             policy = hash[name + ':IPv4'] == $2.to_sym ? $2.to_sym : :inconsistent
-             ipname = name + ':IP'
-             hash[ipname] = policy
-             chains << new({:name => ipname, :policy => policy })
-             debug "[dup] #{ipname}, #{policy}"
+          policy = $2 == '-' ? :empty : $2.to_sym
+          if protocol=='IPv6' && hash[name + ':']
+            # duplicate so create a {table}:{chain}:IP instance
+            ippolicy = hash[name + ':'] == policy ? policy : :inconsistent
+            ipname = name + ':'
+            hash[ipname] = ippolicy
+            chains << new({:name => ipname, :policy => ippolicy })
+            debug "[dup] #{ipname}, #{ippolicy}"
           end
           name += ':' + protocol
-          hash[name] = $2.to_sym
-          chains << new({:name => name, :policy => $2.to_sym })
-          debug "#{name}, #{$2}"
+          hash[name] = policy
+          chains << new({:name => name, :policy => policy })
+          debug "#{name}, #{policy}"
         elsif line =~ /^\*(\S+)/
           table = $1
         end
@@ -122,4 +122,22 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
     chains
   end
 
+
+  private def allvalidchains
+    tables = []
+    @resource[:name].match(Nameformat)
+    table = ($1=='') ? 'filter' : $1.downcase
+    chain = $2
+    protocol = $3
+    if protocol == 'IP' or protocol == ''
+      tables << Mapping['IPv4']['tables']
+      tables << Mapping['IPv6']['tables']
+    else
+      tables << Mapping[protocol]['tables']
+    end
+    tables.each { |t| 
+      yield t,table,chain,protocol
+    }
+  end
+ 
 end

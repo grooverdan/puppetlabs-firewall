@@ -1,16 +1,19 @@
 
-Puppet::Type.newtype(:firewallchaininternal) do
+Puppet::Type.newtype(:firewallchain) do
 
   @doc = <<-EOS
-    This type provides the capability to manage internal iptables chain policies within
-    puppet.
+    This type provides the capability to manage iptables chains and policies on
+    internal chains within puppet.
   EOS
 
-  Chains = 'PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT'
+  InternalChains = 'PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT'
   Tables = 'NAT|MANGLE|FILTER|RAW|RAWPOST|BROUTE|'
-  Nameformat = /^(#{Tables}):(#{Chains}):(IP(v[46])?|EB)$/
+  # Technically colons (':') are allowed in table names however it requires
+  # ruby-1.9 to do a regex to allow a backslash escaping of the colon.
+  # ruby-1.9 regex:  Nameformat = /^(<table>#{Tables}):(<chain>([^:]*(?<!\\))+):(<protocol>IP(v[46])?|EB)?$/
+  Nameformat = /^(#{Tables}):([^:]+):(IP(v[46])?|ethernet)$/
 
-  feature :iptables_inbuilt_chain, "The provider provides iptables chain features."
+  feature :iptables_chain, "The provider provides iptables chain features."
   feature :policy, "Default policy (inbuilt chains only)"
 
   ensurable do
@@ -26,7 +29,7 @@ Puppet::Type.newtype(:firewallchaininternal) do
 
     validate do |value|
       if value !~ Nameformat then
-        raise ArgumentError, "Inbuilt chains must be in the form {chain}:{table}:{protocol} where {table} is one of FILTER, NAT, MANGLE, RAW, RAWPOST, BROUTE or empty (alias for filter), chain must be one of PREROUTING, POSTROUTING, BROUTING, INPUT, FORWARD, OUTPUT, and {protocol} being one of IP (both IPv4 and IPv6), IPv4, IPv6, EB (ethernet bridging) got '#{value}' '#{Chains}' '#{$1}' '#{$2}' '#{$3}'"
+        raise ArgumentError, "Inbuilt chains must be in the form {chain}:{table}:{protocol} where {table} is one of FILTER, NAT, MANGLE, RAW, RAWPOST, BROUTE or empty (alias for filter), chain can be anything without colons or one of PREROUTING, POSTROUTING, BROUTING, INPUT, FORWARD, OUTPUT for the inbuilt chains, and {protocol} being empty or IP (both meaning IPv4 and IPv6), IPv4, IPv6, ethernet (ethernet bridging) got '#{value}' table:'#{$1}' chain:'#{$2}' protocol:'#{$3}'"
       else 
         table = $1
         chain = $2
@@ -40,8 +43,8 @@ Puppet::Type.newtype(:firewallchaininternal) do
           if chain !~ /^(PREROUTING|POSTROUTING|OUTPUT)$/
             raise ArgumentError, "PREROUTING, POSTROUTING and OUTPUT are the only chains that can be used in table 'nat'"
           end
-          if protocol =~/^IP(v6)?$/
-            raise ArgumentError, "table nat isn't valid in IPv6 (or IP which is IPv4 and IPv6)"
+          if protocol =~/^(IP(v6)?)?$/
+            raise ArgumentError, "table nat isn't valid in IPv6 (or the default IP which is IPv4 and IPv6). You must specify ':IPv4' in the name"
           end
         when 'RAW'
           if chain !~ /^(PREROUTING|OUTPUT)$/
@@ -71,21 +74,31 @@ Puppet::Type.newtype(:firewallchaininternal) do
       * return - the packet is returned to calling (jump) queue
                  or the default of inbuilt chains
     EOS
-    newvalues(:accept, :drop, :queue, :return)
-    defaultto :return
+    newvalues(:accept, :drop, :queue, :return, :empty)
+    defaultto :empty
   end
 
   validate do
     debug("[validate]")
 
-    if value(:ensure).to_s == "absent"
-      self.fail "Cannot remove in-built chains"
-    end
     value(:name).match(Nameformat)
     table = $1
     chain = $2
     protocol = $3
 
+    # Check that we're removing and internal chain
+    if chain =~ /^#{InternalChains}/
+      if value(:ensure).to_s == "absent"
+        self.fail "Cannot remove in-built chains"
+      end
+    else
+    # Check that we're not setting a policy on a user chain
+      if value(:policy).to_s != "empty"  &&
+        self.fail 'policy can only be set on in-built chains'
+      end
+    end
+ 
+    # no DROP policy on nat table
     if table == 'nat' &&
        value(:policy).to_s == 'DROP'
       self.fail 'The "nat" table is not intended for filtering, the use of DROP is therefore inhibited'
