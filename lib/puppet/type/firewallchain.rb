@@ -2,9 +2,16 @@
 Puppet::Type.newtype(:firewallchain) do
 
   @doc = <<-EOS
-    This type provides the capability to manage firewall chains within
-    puppet.
+    This type provides the capability to manage iptables chains and policies on
+    internal chains within puppet.
   EOS
+
+  InternalChains = 'PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT'
+  Tables = 'NAT|MANGLE|FILTER|RAW|RAWPOST|BROUTE|'
+  # Technically colons (':') are allowed in table names however it requires
+  # ruby-1.9 to do a regex to allow a backslash escaping of the colon.
+  # ruby-1.9 regex:  Nameformat = /^(<table>#{Tables}):(<chain>([^:]*(?<!\\))+):(<protocol>IP(v[46])?|EB)?$/
+  Nameformat = /^(#{Tables}):([^:]+):(IP(v[46])?|ethernet)$/
 
   feature :iptables_chain, "The provider provides iptables chain features."
   feature :policy, "Default policy (inbuilt chains only)"
@@ -21,32 +28,38 @@ Puppet::Type.newtype(:firewallchain) do
     isnamevar
 
     validate do |value|
-      if value =~ /^(PREROUTING|POSTROUTING|INPUT|FORWARD|OUTPUT)_?(\w*)/
-        if $2 !~ /^(NAT|MANGLE|FILTER|RAW|RAWPOST|)_?(\w*)$/
-          raise ArgumentError, "Inbuilt chains including %s must only be suffixed _{tablename}" % value
-        elsif $2 !~ /^(IPv[46]|EB)/
-          # ugly and provider specific
-          raise ArgumentError, "Inbuilt chains must have a suffix _IPv4 or _IPv6 or _EB (ethernet chains)"
-        end
+      if value !~ Nameformat then
+        raise ArgumentError, "Inbuilt chains must be in the form {chain}:{table}:{protocol} where {table} is one of FILTER, NAT, MANGLE, RAW, RAWPOST, BROUTE or empty (alias for filter), chain can be anything without colons or one of PREROUTING, POSTROUTING, BROUTING, INPUT, FORWARD, OUTPUT for the inbuilt chains, and {protocol} being empty or IP (both meaning IPv4 and IPv6), IPv4, IPv6, ethernet (ethernet bridging) got '#{value}' table:'#{$1}' chain:'#{$2}' protocol:'#{$3}'"
+      else 
+        table = $1
+        chain = $2
+        protocol = $3
+        case table
+        when /^(FILTER|)$/
+          if chain !~ /^(INPUT|OUTPUT|FORWARD)$/
+            raise ArgumentError, "INPUT, OUTPUT and FORWARD are the only chains that can be used in table 'filter'"
+          end
+        when 'NAT'
+          if chain !~ /^(PREROUTING|POSTROUTING|OUTPUT)$/
+            raise ArgumentError, "PREROUTING, POSTROUTING and OUTPUT are the only chains that can be used in table 'nat'"
+          end
+          if protocol =~/^(IP(v6)?)?$/
+            raise ArgumentError, "table nat isn't valid in IPv6 (or the default IP which is IPv4 and IPv6). You must specify ':IPv4' in the name"
+          end
+        when 'RAW'
+          if chain !~ /^(PREROUTING|OUTPUT)$/
+            raise ArgumentError,'PREROUTING and OUTPUT are the only chains valid in the table \'raw\''
+          end
+        when 'BROUTE'
+          if protocol != 'EB'
+            raise ArgumentError,'BROUTE is only valid with protocol \'EB\''
+          end
+          if chain != 'BROUTING'
+            raise ArgumentError,'BROUTING is the only valid chain on table \'BROUTE\''
+          end
+        end  
       end
     end
-  end
-
-  newproperty(:table, :required_features => :iptables_chain) do
-    desc <<-EOS
-      Table to use. Can be one of:
-
-      * nat
-      * mangle
-      * filter
-      * raw
-      * rawpost
-
-      By default the setting is 'filter'.
-    EOS
-
-    newvalues(:nat, :mangle, :filter, :raw, :rawpost)
-    defaultto :filter
   end
 
   newproperty(:policy) do
@@ -68,44 +81,25 @@ Puppet::Type.newtype(:firewallchain) do
   validate do
     debug("[validate]")
 
-    if value(:ensure).to_s == "absent" &&
-      value(:name) =~ /PREROUTING|POSTROUTING|INPUT|FORWARD|OUTPUT/
+    value(:name).match(Nameformat)
+    table = $1
+    chain = $2
+    protocol = $3
 
-      self.fail "Cannot remove in-built chains"
-    end
-    # copied from firewall.rb
-    # TODO: this is put here to skip validation if ensure is not set. This
-    # is because there is a revalidation stage called later where the values
-    # are not set correctly. I tried tracing it - but have put in this
-    # workaround instead to skip. Must get to the bottom of this.
-    if ! value(:ensure)
-      return
-    end
-
-    # First we make sure the chains and tables are valid combinations
-    if value(:table).to_s == "filter" &&
-      value(:chain) =~ /PREROUTING|POSTROUTING/
-
-      self.fail "PREROUTING and POSTROUTING cannot be used in table 'filter'"
-    end
-
-    if value(:table).to_s == "nat" && value(:chain) =~ /^(INPUT|FORWARD)/
-      self.fail "INPUT and FORWARD cannot be used in table 'nat'"
-    end
-
-    if value(:table).to_s == "raw" &&
-      value(:chain) =~ /^(INPUT|FORWARD|POSTROUTING)/
-
-      self.fail 'INPUT, FORWARD and POSTROUTING cannot be used in table raw'
-    end
-
+    # Check that we're removing and internal chain
+    if chain =~ /^#{InternalChains}/
+      if value(:ensure).to_s == "absent"
+        self.fail "Cannot remove in-built chains"
+      end
+    else
     # Check that we're not setting a policy on a user chain
-    if value(:policy).to_s != "empty"  &&
-      value(:name) !~ /^(PREROUTING|POSTROUTING|INPUT|FORWARD|OUTPUT)/
-
-      self.fail 'policy can only be set on in-built chains'
+      if value(:policy).to_s != "empty"  &&
+        self.fail 'policy can only be set on in-built chains'
+      end
     end
-    if value(:table).to_s == 'nat' &&
+ 
+    # no DROP policy on nat table
+    if table == 'nat' &&
        value(:policy).to_s == 'DROP'
       self.fail 'The "nat" table is not intended for filtering, the use of DROP is therefore inhibited'
     end
