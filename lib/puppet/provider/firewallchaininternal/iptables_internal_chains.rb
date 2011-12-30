@@ -98,7 +98,6 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
     chains = []
     hash = {}
 
-    # TODO merge identical IPv4/IPv6 entries
     Mapping.each { |protocol, c|
       c['save'].call.split("\n").each do |line|
         if line =~ /^:(#{Chains})\s+(\w+)/ then
@@ -114,7 +113,7 @@ Puppet::Type.type(:firewallchaininternal).provide :iptables_chain_internal do
           name += ':' + protocol
           hash[name] = $2.to_sym
           chains << new({:name => name, :policy => $2.to_sym })
-          debug name, $2
+          debug "#{name}, #{$2}"
         elsif line =~ /^\*(\S+)/
           table = $1
         end
