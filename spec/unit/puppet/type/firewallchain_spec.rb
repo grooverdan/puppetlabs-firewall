@@ -10,9 +10,7 @@ describe firewallchain do
     @provider = stub 'provider'
     @provider.stubs(:name).returns(:iptables_chain)
     Puppet::Type::Firewallchain.stubs(:defaultprovider).returns @provider
-
     @resource = @class.new({:name => ':INPUT:', :policy => :accept })
-    @resource_custom = @class.new({:name => ':testchain:' })
   end
 
   it 'should have :name be its namevar' do
@@ -93,7 +91,10 @@ describe firewallchain do
 
     [:accept, :drop, :queue, :return].each do |policy|
       it "non-inbuilt chains should not accept policy #{policy}" do
-        lambda { @class.new({:name => 'testchain', :policy => policy }) }.should raise_error(Puppet::Error)
+        lambda { @class.new({:name => ':testchain:', :policy => policy }) }.should raise_error(Puppet::Error)
+      end
+      it "non-inbuilt chains can accept policies on protocol = ethernet (policy #{policy})" do
+        @class.new({:name => ':testchain:ethernet', :policy => policy }).should be_instance_of(@provider)
       end
     end
 
