@@ -6,7 +6,7 @@ Puppet::Type.newtype(:firewallchain) do
     internal chains within puppet.
   EOS
 
-  InternalChains = /^(PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT)$/
+  #InternalChains = /^(PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT)$/
   #Tables = 'NAT|MANGLE|FILTER|RAW|RAWPOST|BROUTE|'
   ## Technically colons (':') are allowed in table names however it requires
   ## ruby-1.9 to do a regex to allow a backslash escaping of the colon.
@@ -24,15 +24,6 @@ Puppet::Type.newtype(:firewallchain) do
 
   ensurable do
     defaultvalues
-
-    #newvalue(:IPv4) do
-    #  provider.create_ip(:IPv6) && :present
-    #end
-
-    #newvalue(:IPv6) do
-    #  provider.create_ip(:IPv4) && :present
-    #end
-
     defaultto :present
   end
 
@@ -53,6 +44,10 @@ Puppet::Type.newtype(:firewallchain) do
         when /^(FILTER|)$/
           if chain =~ /^(PREROUTING|POSTROUTING|BROUTING)$/
             raise ArgumentError, "INPUT, OUTPUT and FORWARD are the only inbuilt chains that can be used in table 'filter'"
+          end
+        when 'MANGLE'
+          if chain =~ InternalChains && chain == 'BROUTING'
+            raise ArgumentError, "PREROUTING, POSTROUTING, INPUT, FORWARD and OUTPUT are the only inbuilt chains that can be used in table 'mangle'"
           end
         when 'NAT'
           if chain =~ /^(BROUTING|INPUT|FORWARD)$/
@@ -116,14 +111,6 @@ Puppet::Type.newtype(:firewallchain) do
       self.fail "Cannot remove in-built chains"
     end
 
-    # from firewall.rb
-    # TODO: this is put here to skip validation if ensure is not set. This
-    # is because there is a revalidation stage called later where the values
-    # are not set correctly. I tried tracing it - but have put in this
-    # workaround instead to skip. Must get to the bottom of this.
-    #if ! value(:ensure)
-    #  return
-    #end
     if value(:policy) == :empty && protocol == 'ethernet'
       self.fail "you must set a non-empty policy on all ethernet table chains"
     end
