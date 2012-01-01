@@ -11,8 +11,8 @@ describe firewallchain do
     @provider.stubs(:name).returns(:iptables_chain)
     Puppet::Type::Firewallchain.stubs(:defaultprovider).returns @provider
 
-    @resource = @class.new({:name => 'INPUT_IPv4', :policy => :accept })
-    @resource_custom = @class.new({:name => 'testchain' })
+    @resource = @class.new({:name => ':INPUT:', :policy => :accept })
+    @resource_custom = @class.new({:name => ':testchain:' })
   end
 
   it 'should have :name be its namevar' do
@@ -20,22 +20,65 @@ describe firewallchain do
   end
 
   describe ':name' do
-    it 'should accept a name' do
-      @resource[:name] = 'INPUT_IPv4'
-      @resource[:name].should == 'INPUT_IPv4'
+    {'' => ['INPUT','OUTPUT','FORWARD'],
+     'NAT' => ['PREROUTING', 'POSTROUTING', 'OUTPUT'],
+     'MANGLE' => [ 'PREROUTING', 'POSTROUTING', 'INPUT', 'FORWARD', 'OUTPUT' ],
+     'FILTER' => ['INPUT','OUTPUT','FORWARD'],
+     'RAW' => [ 'PREROUTING', 'OUTPUT'],
+     'BROUTE' => ['BROUTING']
+    }.each_pair do |table, allowedinternalchains|
+      ['', 'IPv4', 'IPv6', 'IP', 'ethernet'].each do |protocol|
+        [ 'test', '$5()*&%\'"^$09):' ].each do |chainname|
+          name = "#{table}:#{chainname}:#{protocol}"
+          if table == 'NAT' && ['IPv6','','IP'].include?(protocol)
+            it "should fail #{name}" do
+              lambda { @resource[:name] = name }.should raise_error(Puppet::Error)
+            end
+          elsif protocol != 'ethernet' && table == 'BROUTE'
+            it "should fail #{name}" do
+              lambda { @resource[:name] = name }.should raise_error(Puppet::Error)
+            end
+          else
+            it "should accept name #{name}" do
+              @resource[:name] = name
+              @resource[:name].should == name
+            end
+          end
+        end # chainname
+      end # protocol
+
+      [ 'PREROUTING', 'POSTROUTING', 'BROUTING', 'INPUT', 'FORWARD', 'OUTPUT' ].each do |internalchain|
+        name = table + ':' + internalchain + ':'
+        if internalchain == 'BROUTING'
+          name += 'ethernet'
+        elsif table == 'NAT'
+          name += 'IPv4'
+        end
+        if allowedinternalchains.include? internalchain
+          it "should allow #{name}" do
+            @resource[:name] = name
+            @resource[:name].should == name
+          end
+        else
+          it "should fail #{name}" do
+            lambda { @resource[:name] = name }.should raise_error(Puppet::Error)
+          end
+        end
+      end # internalchain
+
+    end # table, allowedinternalchainnames
+
+    it 'should fail with invalid table names' do
+      lambda { @resource[:name] = 'wrongtablename:test:' }.should raise_error(Puppet::Error)
     end
 
-    it 'should fail when an inbuilt chain is specified with a nonexistant table suffix' do
-      lambda { @class.new({:name => 'INPUT_nontable'}) }.should raise_error(Puppet::Error)
+    it 'should fail with invalid protocols names' do
+      lambda { @resource[:name] = ':test:IPv5' }.should raise_error(Puppet::Error)
     end
 
   end
 
   describe ':policy' do
-    it "should have default table as filter " do
-      res = @class.new(:name => "test")
-      res.parameters[:table].should == :filter
-    end
  
     [:accept, :drop, :queue, :return].each do |policy|
       it "should accept policy #{policy}" do
@@ -54,19 +97,6 @@ describe firewallchain do
       end
     end
 
-  end
-
-  describe ':table' do
-    [:nat, :mangle, :filter, :raw, :rawpost].each do |table|
-      it "should accept table value #{table}" do
-        @resource[:table] = table
-        @resource[:table].should == table
-      end
-    end
-
-    it "should fail when table value is not recognized" do
-      lambda { @resource[:table] = 'not valid' }.should raise_error(Puppet::Error)
-    end
   end
 
 end
