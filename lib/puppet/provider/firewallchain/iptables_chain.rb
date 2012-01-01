@@ -24,7 +24,7 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
              }
   InternalChains = /^(PREROUTING|POSTROUTING|BROUTING|INPUT|FORWARD|OUTPUT)$/
   Tables = 'NAT|MANGLE|FILTER|RAW|RAWPOST|BROUTE|'
-  Nameformat = /^(#{Tables}):([^:]+):(IP(v[46])?|ethernet|)$/
+  Nameformat = /^(#{Tables}):(.+):(IP(v[46])?|ethernet|)$/
 
   def create
     # can't create internal chains
@@ -44,14 +44,6 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
     end
   end
 
-  def create_ip(protocol)
-    @resource[:name].match(Nameformat)
-    table = ($1=='') ? 'filter' : $1.downcase
-    chain = $2
-    debug "Inserting chain #{chain} on table #{table} (#{protocol.to_s})"
-    Mapping[protocol][:tables].call ['-t',table,'-N',chain]
-  end
-
   def destroy
     # can't delete internal chains
     if @resource[:name] =~ InternalChains
@@ -64,7 +56,7 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
   end
 
   def exists?
-    # we want puppet to call create on 1/2 completed rules
+    # we want puppet to call create on 1/2 completed rules (i.e. :ensure => :IPv4/6)
     properties[:ensure] == :present
   end
 
