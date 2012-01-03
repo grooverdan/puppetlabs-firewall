@@ -507,11 +507,7 @@ Puppet::Type.newtype(:firewall) do
     end
 
     if value(:set_mark)
-<<<<<<< HEAD
-      unless value(:jump).to_s  =~ /MARK/ && 
-=======
       unless value(:jump).to_s  =~ /MARK/ &&
->>>>>>> 2543bdac8fb909cbd33050972bfc88f5cbce1829
              value(:chain).to_s =~ /PREROUTING/ &&
              value(:table).to_s =~ /mangle/
         self.fail "Parameter set_mark only applies to " \
