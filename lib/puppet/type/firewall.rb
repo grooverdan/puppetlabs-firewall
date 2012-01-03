@@ -266,7 +266,7 @@ Puppet::Type.newtype(:firewall) do
 
       if ["accept","reject","drop"].include?(value.downcase)
         raise ArgumentError, <<-EOS
-          Jump destination should not be one of ACCEPT, REJECT or DENY. Use
+          Jump destination should not be one of ACCEPT, REJECT or DROP. Use
           the action property instead.
         EOS
       end
@@ -437,10 +437,9 @@ Puppet::Type.newtype(:firewall) do
       if ! value.to_s.include?("0x")
         "0x" + value.to_i.to_s(16)
       else
-        super
+        super(value)
       end
     end
-
   end
 
   newparam(:line) do
@@ -508,7 +507,11 @@ Puppet::Type.newtype(:firewall) do
     end
 
     if value(:set_mark)
+<<<<<<< HEAD
       unless value(:jump).to_s  =~ /MARK/ && 
+=======
+      unless value(:jump).to_s  =~ /MARK/ &&
+>>>>>>> 2543bdac8fb909cbd33050972bfc88f5cbce1829
              value(:chain).to_s =~ /PREROUTING/ &&
              value(:table).to_s =~ /mangle/
         self.fail "Parameter set_mark only applies to " \
@@ -532,9 +535,7 @@ Puppet::Type.newtype(:firewall) do
       unless value(:todest)
         self.fail "Parameter jump => DNAT must have todest parameter"
       end
-    end
-
-    if value(:jump).to_s == "SNAT"
+    elsif value(:jump).to_s == "SNAT"
       unless value(:table).to_s =~ /nat/
         self.fail "Parameter jump => SNAT only applies to table => nat"
       end
@@ -542,18 +543,20 @@ Puppet::Type.newtype(:firewall) do
       unless value(:tosource)
         self.fail "Parameter jump => DNAT must have tosource parameter"
       end
-    end
-
-    if value(:jump).to_s == "REDIRECT"
+    elsif value(:jump).to_s == "REDIRECT"
       unless value(:toports)
         self.fail "Parameter jump => REDIRECT missing mandatory toports " \
           "parameter"
       end
-    end
-
-    if value(:jump).to_s == "MASQUERADE"
+    elsif value(:jump).to_s == "MASQUERADE"
       unless value(:table).to_s =~ /nat/
         self.fail "Parameter jump => MASQUERADE only applies to table => nat"
+      end
+    end
+
+    if value(:log_prefix) || value(:log_level)
+      unless value(:jump).to_s == "LOG"
+        self.fail "Parameter log_prefix and :log_level require jump => LOG"
       end
     end
 
