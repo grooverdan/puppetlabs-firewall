@@ -11,8 +11,9 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
   commands :ip6tables => '/sbin/ip6tables'
   commands :ip6tables_save => '/sbin/ip6tables-save'
 
-  commands :ebtables => '/sbin/ebtables'
-  commands :ebtables_save => '/sbin/ebtables-save'
+  optional_commands( { :ebtables => '/sbin/ebtables',
+                       :ebtables_save => '/sbin/ebtables-save'
+  } )
 
   defaultfor :kernel => :linux
 
@@ -111,31 +112,35 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
     hash = {}
 
     Mapping.each { |p, c|
-      c[:save].call.split("\n").each do |line|
-        if line =~ c[:re] then
-          name = (table == 'filter' ? '' : table.upcase) + ':' + $1
-          policy = $2 == '-' ? :empty : $2.downcase.to_sym
-          if ( p == :IPv4 or p == :IPv6 ) && table != 'nat'
-            if hash[name]
-              # duplicate so create a {table}:{chain}:IP instance
-              ippolicy = hash[name][:policy] == policy ? policy : :inconsistent
-              hash.delete(name)
-              chains << new({:name => name + ':', :policy => ippolicy, :ensure => :present })
-              debug "[dup] '#{name}:' #{ippolicy}"
-            else
-              hash[name] = { :policy => policy, :protocol => p }
+      begin
+        c[:save].call.split("\n").each do |line|
+          if line =~ c[:re] then
+            name = (table == 'filter' ? '' : table.upcase) + ':' + $1
+            policy = $2 == '-' ? :empty : $2.downcase.to_sym
+            if ( p == :IPv4 or p == :IPv6 ) && table != 'nat'
+              if hash[name]
+                # duplicate so create a {table}:{chain}:IP instance
+                ippolicy = hash[name][:policy] == policy ? policy : :inconsistent
+                hash.delete(name)
+                chains << new({:name => name + ':', :policy => ippolicy, :ensure => :present })
+                debug "[dup] '#{name}:' #{ippolicy}"
+              else
+                hash[name] = { :policy => policy, :protocol => p }
+              end
             end
+            name += ':' + p.to_s
+            chains << new({:name => name, :policy => policy, :ensure => :present })
+            debug "[instance] '#{name}' #{policy}"
+          elsif line =~ /^\*(\S+)/
+            table = $1
+          elsif line =~ /^($|-A|COMMIT|#)/
+            # other stuff we don't care about
+          else
+            debug "unrecognised line: #{line}"
           end
-          name += ':' + p.to_s
-          chains << new({:name => name, :policy => policy, :ensure => :present })
-          debug "[instance] '#{name}' #{policy}"
-        elsif line =~ /^\*(\S+)/
-          table = $1
-        elsif line =~ /^($|-A|COMMIT|#)/
-          # other stuff we don't care about
-        else
-          debug "unrecognised line: #{line}"
         end
+      rescue Puppet::Error
+        # ignore command not found for ebtables or anything that doesn't exist
       end
     }
     # put all the chain names that exist in one IP stack into a 1/2 completed (:ensure) state
