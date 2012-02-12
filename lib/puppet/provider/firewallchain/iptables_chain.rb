@@ -37,7 +37,7 @@ Puppet::Type.type(:firewallchain).provide :iptables_chain do
       else
         debug "Inserting chain #{chain} on table #{table} (#{protocol}) using #{t}"
         t.call ['-t',table,'-N',chain]
-        if @resources[:policy] != :empty
+        if @resource[:policy] != :empty
           t.call ['-t',table,'-P',chain,@resource[:policy].to_s.upcase] 
         end
       end
